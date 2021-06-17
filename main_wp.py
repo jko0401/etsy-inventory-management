@@ -1,20 +1,13 @@
 import os
 import re
 import pickle
+import pandas as pd
 # Gmail API utils
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-# for encoding/decoding messages in base64
-from base64 import urlsafe_b64decode, urlsafe_b64encode
-# for dealing with attachement MIME types
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
-from email.mime.audio import MIMEAudio
-from email.mime.base import MIMEBase
-from email.mime.multipart import MIMEMultipart
-from mimetypes import guess_type as guess_mime_type
+import base64
+
 
 # Request all access (permission to read/send/receive emails, manage the inbox, and more)
 SCOPES = ['https://mail.google.com/']
@@ -58,17 +51,14 @@ def search_messages(service, query):
 
 transaction_emails = search_messages(service, 'from: transaction@etsy.com')
 
-def read_message(service, message_id):
+SALES_DICT = {}
+
+
+def readMessage(service, message_id):
     """
-    This function takes Gmail API `service` and the given `message_id` and does the following:
-        - Downloads the content of the email
-        - Prints email basic information (To, From, Subject & Date) and plain/text parts
-        - Creates a folder for each email based on the subject
-        - Downloads text/html content (if available) and saves it under the folder created as index.html
-        - Downloads any file that is attached to the email and saves it in the folder created
+
     """
     msg = service.users().messages().get(userId='me', id=message_id).execute()
-    # parts can be the message body, or attachments
     payload = msg['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
@@ -76,28 +66,43 @@ def read_message(service, message_id):
         name = header.get("name")
         value = header.get("value")
         if name == "Subject":
-            try:
-                print("Order Number:", value.split("#",1)[1][:-1])
-            except IndexError:
-                if 'Etsy Order confirmation for:' in value:
-                    print("Order Number:", value.split("(",1)[1][:-1])
+            if 'Purchase' in value:
+                orderno = 0
+                pass
+            else:
+                try:
+                    orderno = value.split("#", 1)[1][:-1]
+                    # print("Order Number:", value.split("#",1)[1][:-1])
+                except IndexError:
+                    orderno = value.split("(", 1)[1][:-1]
+                    # print("Order Number:", value.split("(",1)[1][:-1])
         if name == "Date":
-            # we print the date when the message was sent
-            print("Date:", value)
-    email_body = base64.urlsafe_b64decode(parts[0]['body']['data']).decode("utf-8")
-    print('Transaction IDs: ', find_part('Transaction ID:(.*)', email_body))
-    print('Items: ', find_part('Item:(.*)', email_body))
-    print('Primary: ', find_part('Color:(.*)', email_body))
-    print('Secondary: ', find_part('Secondary color:(.*)', email_body))
-    print('Quantity: ', find_part('Quantity:(.*)', email_body))
-    print('Price: ', find_part('Item price:(.*)', email_body))
-    print("="*50)
+            pur_date = value
+            # print("Date:", value)
 
-def find_part(part, body):
+    if orderno is not 0:
+        SALES_DICT[orderno] = {'date': pur_date, 'order_total': '', 'tax_fee': '', 'listing_fee': '',
+                               'customer_shipping': '', 'discount': '', 'profit': '', 'margin': ''}
+        email_body = base64.urlsafe_b64decode(parts[0]['body']['data']).decode("utf-8")
+        populateSalesInfo(orderno, email_body)
+
+
+def findPart(part, body):
     result = re.findall(part, body)
     try:
-        for i, x in enumerate(result):
+        for i,x in enumerate(result):
             result[i] = x.strip(' ').strip('\r')
     except AttributeError:
         pass
     return result
+
+
+def populateSalesInfo(ordernumber, body):
+    info_list = [('Order Total:(.*)', 'order_total'), ('Shipping:(.*)', 'customer_shipping'), ('Discount(.*)', 'discount')]
+    for info in info_list:
+        SALES_DICT[ordernumber][info[1]] = findPart(info[0], body)
+
+
+email_ids = [test['id'] for test in transaction_emails]
+for eid in email_ids:
+    readMessage(service, eid)
