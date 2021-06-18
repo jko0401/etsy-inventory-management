@@ -34,10 +34,9 @@ def gmail_authenticate():
             pickle.dump(creds, token)
     return build('gmail', 'v1', credentials=creds)
 
-# get the Gmail API service
-service = gmail_authenticate()
 
-def search_messages(service, query):
+
+def searchMessages(service, query):
     result = service.users().messages().list(userId='me',q=query).execute()
     messages = [ ]
     if 'messages' in result:
@@ -49,20 +48,60 @@ def search_messages(service, query):
             messages.extend(result['messages'])
     return messages
 
-transaction_emails = search_messages(service, 'from: transaction@etsy.com')
-
-SALES_DICT = {}
-
 
 def readMessage(service, message_id):
-    """
-
-    """
     msg = service.users().messages().get(userId='me', id=message_id).execute()
     payload = msg['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    for header in headers:
+    return headers, parts
+
+
+def findPart(part, body):
+    result = re.findall(part, body)
+    try:
+        for i,x in enumerate(result):
+            result[i] = x.strip(' ').strip('\r')
+    except AttributeError:
+        pass
+    return result
+
+
+def populateSalesInfo(ordernumber, body):
+    info_list = [('Order Total:(.*)', 'order_total'), ('Shipping:(.*)', 'customer_shipping'), ('Discount(.*)', 'discount')]
+    for info in info_list:
+        SALES_DICT[ordernumber][info[1]] = findPart(info[0], body)
+
+
+def populateTransInfo(ordernumber, body):
+    trans_ids = findPart('Transaction ID:(.*)', body)
+    for t_id in trans_ids:
+        TRANS_DICT[t_id] = {'order_number':ordernumber, 'cost':''}
+
+
+def populateShipInfo(body):
+    label_id = findPart('Label #(.*)', body)
+    print(label_id)
+    SHIP_DICT[label_id] = {'date': '', 'order_number': '', 'cost': '', 'address': '', 'trans_cost': ''}
+    info_list = [('Total Cost(.*)', 'cost'), ('Ships To(.*)', 'address')]
+    for info in info_list:
+        SALES_DICT[label_id][info[1]] = findPart(info[0], body)
+
+    return label_id
+
+
+# get the Gmail API service
+service = gmail_authenticate()
+
+transaction_emails = searchMessages(service, 'from: transaction@etsy.com')
+email_ids = [temp['id'] for temp in transaction_emails]
+
+SALES_DICT = {}
+TRANS_DICT = {}
+
+for eid in email_ids:
+    msg_items = readMessage(service, eid)
+    for header in msg_items[0]:
         name = header.get("name")
         value = header.get("value")
         if name == "Subject":
@@ -83,26 +122,27 @@ def readMessage(service, message_id):
     if orderno is not 0:
         SALES_DICT[orderno] = {'date': pur_date, 'order_total': '', 'tax_fee': '', 'listing_fee': '',
                                'customer_shipping': '', 'discount': '', 'profit': '', 'margin': ''}
-        email_body = base64.urlsafe_b64decode(parts[0]['body']['data']).decode("utf-8")
+        email_body = base64.urlsafe_b64decode(msg_items[1][0]['body']['data']).decode("utf-8")
         populateSalesInfo(orderno, email_body)
+        populateTransInfo(orderno, email_body)
 
+shipping_emails = searchMessages(service, 'from:no-reply@etsy.com')
+shipemail_ids = [temp['id'] for temp in shipping_emails]
+print(shipemail_ids)
 
-def findPart(part, body):
-    result = re.findall(part, body)
-    try:
-        for i,x in enumerate(result):
-            result[i] = x.strip(' ').strip('\r')
-    except AttributeError:
-        pass
-    return result
+SHIP_DICT = {}
 
+for sid in shipemail_ids:
+    msg_items = readMessage(service, sid)
+    email_body = base64.urlsafe_b64decode(msg_items[1][0]['body']['data']).decode("utf-8")
+    label_id = populateShipInfo(email_body)
 
-def populateSalesInfo(ordernumber, body):
-    info_list = [('Order Total:(.*)', 'order_total'), ('Shipping:(.*)', 'customer_shipping'), ('Discount(.*)', 'discount')]
-    for info in info_list:
-        SALES_DICT[ordernumber][info[1]] = findPart(info[0], body)
-
-
-email_ids = [test['id'] for test in transaction_emails]
-for eid in email_ids:
-    readMessage(service, eid)
+    for header in msg_items[0]:
+        name = header.get("name")
+        value = header.get("value")
+        if name == "Subject":
+            orderno = value.split("#",1)[1][:-1]
+            SHIP_DICT[label_id]['order_number'] = orderno
+        if name == "Date":
+            created_date = value
+            SHIP_DICT[label_id]['date'] = created_date
