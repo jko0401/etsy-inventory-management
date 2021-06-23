@@ -84,15 +84,23 @@ def populateShipInfo(body):
     label_id = label[0]
     SHIP_DICT[label_id] = {'date': '', 'order_number': '', 'cost': '', 'address': '', 'trans_cost': '',
                            'transaction_id': ''}
-    info_list = [('(?=\$)(.*)(?= USD)', 'cost'), ('Ships To(.*)', 'address'),
+    info_list = [('(?=\$)(.*)(?= USD)', 'cost'), ('(?<!Ships To)(<span (.*)</span>)', 'address'),
                  ('(?<=Transaction ID: )(\d{10})', 'transaction_id')]
     for info in info_list:
         if info[1] is 'cost':
             SHIP_DICT[label_id][info[1]] = findPart(info[0], body)[-1]
+        elif info[1] is 'address':
+            SHIP_DICT[label_id][info[1]] = cleanHtml(findPart(info[0], body)[0][0])
         else:
             SHIP_DICT[label_id][info[1]] = findPart(info[0], body)[0]
 
     return label_id
+
+
+def cleanHtml(raw_html):
+  cleanr = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
+  cleantext = re.sub(cleanr, ' ', raw_html).strip()
+  return cleantext
 
 
 # get the Gmail API service
