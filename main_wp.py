@@ -80,12 +80,17 @@ def populateTransInfo(ordernumber, body):
 
 
 def populateShipInfo(body):
-    label_id = findPart('Label #(.*)', body)
-    print(label_id)
-    SHIP_DICT[label_id] = {'date': '', 'order_number': '', 'cost': '', 'address': '', 'trans_cost': ''}
-    info_list = [('Total Cost(.*)', 'cost'), ('Ships To(.*)', 'address')]
+    label = findPart('(\d{12})(?=</a>)', body)
+    label_id = label[0]
+    SHIP_DICT[label_id] = {'date': '', 'order_number': '', 'cost': '', 'address': '', 'trans_cost': '',
+                           'transaction_id': ''}
+    info_list = [('(?=\$)(.*)(?= USD)', 'cost'), ('Ships To(.*)', 'address'),
+                 ('(?<=Transaction ID: )(\d{10})', 'transaction_id')]
     for info in info_list:
-        SALES_DICT[label_id][info[1]] = findPart(info[0], body)
+        if info[1] is 'cost':
+            SHIP_DICT[label_id][info[1]] = findPart(info[0], body)[-1]
+        else:
+            SHIP_DICT[label_id][info[1]] = findPart(info[0], body)[0]
 
     return label_id
 
@@ -98,6 +103,7 @@ email_ids = [temp['id'] for temp in transaction_emails]
 
 SALES_DICT = {}
 TRANS_DICT = {}
+SHIP_DICT = {}
 
 for eid in email_ids:
     msg_items = readMessage(service, eid)
@@ -126,23 +132,26 @@ for eid in email_ids:
         populateSalesInfo(orderno, email_body)
         populateTransInfo(orderno, email_body)
 
+
+
 shipping_emails = searchMessages(service, 'from:no-reply@etsy.com')
 shipemail_ids = [temp['id'] for temp in shipping_emails]
 print(shipemail_ids)
 
-SHIP_DICT = {}
-
 for sid in shipemail_ids:
     msg_items = readMessage(service, sid)
-    email_body = base64.urlsafe_b64decode(msg_items[1][0]['body']['data']).decode("utf-8")
-    label_id = populateShipInfo(email_body)
+    email_body = base64.urlsafe_b64decode(msg_items[1][1]['body']['data']).decode("utf-8")
+    try:
+        l_id = populateShipInfo(email_body)
 
-    for header in msg_items[0]:
-        name = header.get("name")
-        value = header.get("value")
-        if name == "Subject":
-            orderno = value.split("#",1)[1][:-1]
-            SHIP_DICT[label_id]['order_number'] = orderno
-        if name == "Date":
-            created_date = value
-            SHIP_DICT[label_id]['date'] = created_date
+        for header in msg_items[0]:
+            name = header.get("name")
+            value = header.get("value")
+            if name == "Subject":
+                orderno = value.split("#", 1)[1][:-1]
+                SHIP_DICT[l_id]['order_number'] = orderno
+            if name == "Date":
+                created_date = value
+                SHIP_DICT[l_id]['date'] = created_date
+    except IndexError:
+        print(sid, 'Bundled Labels')
