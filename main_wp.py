@@ -1,19 +1,20 @@
 import os
 import re
+import sys
 import pickle
 import pandas as pd
 # Gmail API utils
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+# for encoding/decoding messages in base64
 import base64
-
 
 # Request all access (permission to read/send/receive emails, manage the inbox, and more)
 SCOPES = ['https://mail.google.com/']
 our_email = 'test@gmail.com'
 
-def gmail_authenticate():
+def gmailAuthenticate():
     fileDir = os.path.dirname(os.path.realpath('__file__'))
     creds = None
     # the file token.pickle stores the user's access and refresh tokens, and is
@@ -35,15 +36,14 @@ def gmail_authenticate():
     return build('gmail', 'v1', credentials=creds)
 
 
-
 def searchMessages(service, query):
-    result = service.users().messages().list(userId='me',q=query).execute()
+    result = service.users().messages().list(userId='me', q=query).execute()
     messages = [ ]
     if 'messages' in result:
         messages.extend(result['messages'])
     while 'nextPageToken' in result:
         page_token = result['nextPageToken']
-        result = service.users().messages().list(userId='me',q=query, pageToken=page_token).execute()
+        result = service.users().messages().list(userId='me', q=query, pageToken=page_token).execute()
         if 'messages' in result:
             messages.extend(result['messages'])
     return messages
@@ -104,7 +104,8 @@ def cleanHtml(raw_html):
 
 
 # get the Gmail API service
-service = gmail_authenticate()
+os.chdir(sys.path[0])
+service = gmailAuthenticate()
 
 transaction_emails = searchMessages(service, 'from: transaction@etsy.com')
 email_ids = [temp['id'] for temp in transaction_emails]
@@ -156,10 +157,44 @@ for sid in shipemail_ids:
             name = header.get("name")
             value = header.get("value")
             if name == "Subject":
-                orderno = value.split("#", 1)[1][:-1]
+                orderno = value.split("#", 1)[1]
                 SHIP_DICT[l_id]['order_number'] = orderno
             if name == "Date":
                 created_date = value
                 SHIP_DICT[l_id]['date'] = created_date
     except IndexError:
         print(sid, 'Bundled Labels')
+
+os.chdir(r'D:\Code\Git\etsy-inventory-management\statements')
+cwd = os.path.abspath('')
+files = os.listdir(cwd)
+df = pd.DataFrame()
+for file in files:
+    if file.endswith('.csv'):
+        df = df.append(pd.read_csv(file), ignore_index=True)
+
+t_df = df[df['Type'] == 'Transaction']
+s_df = df[df['Type'] == 'Sale']
+
+missing_ship = set()
+missing_trans = set()
+
+for index, row in t_df.iterrows():
+    if row['Title'] == 'Shipping':
+        for key, value in SHIP_DICT.items():
+            if value['order_number'] == row['Info'][7:]:
+                SHIP_DICT[key][value['trans_cost']] = row['Fees & Taxes']
+            else:
+                missing_ship.add(row['Info'][7:])
+    else:
+        try:
+            TRANS_DICT[row['Info'][13:]]['cost'] = row['Fees & Taxes']
+        except KeyError:
+            missing_trans.add(row['Info'][13:])
+
+missing_order = set()
+for index, row in s_df.iterrows():
+    try:
+        SALES_DICT[row['Title'][-10:]]['tax_fee'] = row['Fees & Taxes']
+    except KeyError:
+        missing_order.add(row['Title'][-10:])
