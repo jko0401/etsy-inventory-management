@@ -2,3 +2,7 @@
 /token.pickle
 /Untitled.ipynb
 /statements/
+/actual-ignore/
+.ipynb_checkpoints
+.idea
+wip.ipynb
